@@ -4,8 +4,9 @@ A tiny Windows **system-tray** app that periodically checks your [Shatel](https:
 internet account and raises a Windows notification when **traffic is running low** or the
 **current service period is about to expire**.
 
-The tray icon is **orange "SH" on a dark-blue solid triangle**; it **blinks** while a check
-is in progress and turns **red** while an alert is active.
+The tray icon is the **Shatel logo** (navy "A" with an orange circle). While a check is in
+progress the **orange circle blinks** (hides/shows); the mark turns **red** while an alert
+is active.
 
 <p align="center"><img src="ShatelMon.png" width="96" alt="ShatelMon icon"></p>
 

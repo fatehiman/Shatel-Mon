@@ -247,9 +247,9 @@ class ShatelMonApp:
 
     # -- icon / tooltip --------------------------------------------------------
 
-    def _set_icon_image(self, alert: bool, show_text: bool = True):
+    def _set_icon_image(self, alert: bool, show_circle: bool = True):
         try:
-            self.icon.icon = make_icon(64, alert=alert, show_text=show_text)
+            self.icon.icon = make_icon(64, alert=alert, show_circle=show_circle)
         except Exception:  # noqa: BLE001  (icon loop may not be ready yet)
             pass
 
@@ -258,7 +258,7 @@ class ShatelMonApp:
         the processing animation owns the icon."""
         self._in_alert = bool(self._quota_alert_keys) or self._service_alert_active
         if not self._busy.is_set():
-            self._set_icon_image(self._in_alert, show_text=True)
+            self._set_icon_image(self._in_alert, show_circle=True)
         title = f"{APP_NAME} — {self._quota_status} · {self._service_status}"
         try:
             self.icon.title = title[:127]
@@ -266,12 +266,12 @@ class ShatelMonApp:
             pass
 
     def _animator(self):
-        """Blink the 'SH' on/off while a fetch is running, to convey 'processing'."""
-        blink_on = False
+        """Show/hide the orange circle while a fetch is running, to convey 'processing'."""
+        circle_on = False
         while not self._stop.is_set():
             if self._busy.is_set():
-                blink_on = not blink_on
-                self._set_icon_image(self._in_alert, show_text=blink_on)
+                circle_on = not circle_on
+                self._set_icon_image(self._in_alert, show_circle=circle_on)
                 self._stop.wait(BLINK_INTERVAL)
             else:
                 # idle: wait until the next fetch starts (or we stop)
