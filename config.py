@@ -25,8 +25,15 @@ username = {username}
 password = {password}
 
 [settings]
-; How often to check remaining traffic AND service expiry, in minutes.
+; How often to check (minutes) when traffic is LOW or an alert is active.
 check_interval_minutes = 30
+
+; When plenty of traffic remains, check less often to save effort:
+; if the combined remaining traffic is above relaxed_traffic_threshold_mb
+; (and no alert is active), the app waits relaxed_interval_minutes between
+; checks instead of check_interval_minutes. 6 hours = 360 minutes, 10 GB = 10240 MB.
+relaxed_interval_minutes = 360
+relaxed_traffic_threshold_mb = 10240
 
 ; Alert when the COMBINED remaining traffic of all packages drops
 ; below this many megabytes. 2 GB = 2048 MB.
@@ -56,6 +63,8 @@ class Config:
     username: str = ""
     password: str = ""
     check_interval_minutes: int = 30
+    relaxed_interval_minutes: int = 360
+    relaxed_traffic_threshold_mb: float = 10240.0
     low_traffic_threshold_mb: float = 2048.0
     expire_warning_days: float = 3.0
     service_expire_warning_days: float = 7.0
@@ -101,6 +110,8 @@ def load(path: str) -> Config:
         username=cred.get("username", "").strip() if cred else "",
         password=cred.get("password", "").strip() if cred else "",
         check_interval_minutes=max(1, geti(s, "check_interval_minutes", 30)),
+        relaxed_interval_minutes=max(1, geti(s, "relaxed_interval_minutes", 360)),
+        relaxed_traffic_threshold_mb=getf(s, "relaxed_traffic_threshold_mb", 10240),
         low_traffic_threshold_mb=getf(s, "low_traffic_threshold_mb", 2048),
         expire_warning_days=getf(s, "expire_warning_days", 3),
         service_expire_warning_days=getf(s, "service_expire_warning_days", 7),

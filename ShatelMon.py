@@ -25,6 +25,7 @@ import time
 from logging.handlers import RotatingFileHandler
 
 import pystray
+import requests
 
 import config as cfgmod
 from icon import make_icon
@@ -218,6 +219,7 @@ class ShatelMonApp:
         self._cmd_queue: queue.Queue[str] = queue.Queue()
         self._last_notified: dict[str, float] = {}
         self._busy = threading.Event()          # set while a fetch is in progress
+        self._last_total_mb: float | None = None  # last known combined remaining
 
         self.icon = pystray.Icon(APP_ID, make_icon(64), APP_NAME, menu=self._build_menu())
 
@@ -287,11 +289,39 @@ class ShatelMonApp:
             notify(title, message, self.icon)
             self._last_notified[key] = now
 
+    def _notify_error(self, key: str, title: str, message: str, announce: bool):
+        """Notify about a fetch error. Manual fetches always notify; periodic
+        fetches notify but are de-duplicated so a persistent failure (e.g. the
+        network is down) does not spam the user."""
+        self.client = None
+        log.error("%s: %s", title, message)
+        if announce:
+            notify(title, message, self.icon)
+        else:
+            self.maybe_notify(key, title, message)
+
+    @staticmethod
+    def _error_text(e: Exception) -> str:
+        if isinstance(e, requests.exceptions.RequestException):
+            return ("Could not reach Shatel — please check your internet "
+                    "connection. Will retry automatically.")
+        return f"Could not read the data from Shatel: {e}"
+
     def _client_or_new(self) -> ShatelClient:
         if self.client is None:
             self.client = ShatelClient(self.cfg.username, self.cfg.password,
                                        report=self.cfg.report)
         return self.client
+
+    def _interval_minutes(self) -> int:
+        """Check frequently when traffic is low or an alert is active; relax to
+        the longer interval when plenty of traffic remains."""
+        if self._quota_alert_keys or self._service_alert_active:
+            return self.cfg.check_interval_minutes
+        if (self._last_total_mb is not None and
+                self._last_total_mb > self.cfg.relaxed_traffic_threshold_mb):
+            return self.cfg.relaxed_interval_minutes
+        return self.cfg.check_interval_minutes
 
     # -- the two checks --------------------------------------------------------
 
@@ -300,25 +330,22 @@ class ShatelMonApp:
         try:
             packages = self._client_or_new().get_packages()
         except LoginError as e:
-            self.client = None
-            log.error("Quota login error: %s", e)
             self._quota_status = "login failed"
-            notify(f"{APP_NAME}: login failed", str(e), self.icon) if announce \
-                else self.maybe_notify("login_error", f"{APP_NAME}: login failed", str(e))
+            self._notify_error("login_error", f"{APP_NAME}: login failed",
+                               "Login to Shatel failed — please check your username and "
+                               "password in ShatelMon.conf.", announce)
             return
         except Exception as e:  # noqa: BLE001
-            self.client = None
-            log.error("Quota check failed: %s", e)
             self._quota_status = "quota check failed"
-            msg = f"Could not read the traffic report: {e}"
-            notify(f"{APP_NAME}: quota check failed", msg, self.icon) if announce \
-                else self.maybe_notify("quota_error", f"{APP_NAME}: quota check failed", msg)
+            self._notify_error("quota_error", f"{APP_NAME}: quota check failed",
+                               self._error_text(e), announce)
             return
         finally:
             self._busy.clear()
             self._refresh_icon()
 
         alerts, total = evaluate_quota_alerts(packages, self.cfg)
+        self._last_total_mb = total
         self._quota_status = f"{fmt_traffic(total)} left"
         new_keys = {k for k, _, _ in alerts}
         for k in self._quota_alert_keys - new_keys:   # cleared -> allow future re-alert
@@ -341,19 +368,15 @@ class ShatelMonApp:
         try:
             exp = self._client_or_new().get_service_expiry()
         except LoginError as e:
-            self.client = None
-            log.error("Service-expiry login error: %s", e)
             self._service_status = "login failed"
-            notify(f"{APP_NAME}: login failed", str(e), self.icon) if announce \
-                else self.maybe_notify("login_error", f"{APP_NAME}: login failed", str(e))
+            self._notify_error("login_error", f"{APP_NAME}: login failed",
+                               "Login to Shatel failed — please check your username and "
+                               "password in ShatelMon.conf.", announce)
             return
         except Exception as e:  # noqa: BLE001
-            self.client = None
-            log.error("Service-expiry check failed: %s", e)
             self._service_status = "expiry check failed"
-            msg = f"Could not read the service expiry date: {e}"
-            notify(f"{APP_NAME}: expiry check failed", msg, self.icon) if announce \
-                else self.maybe_notify("expire_error", f"{APP_NAME}: expiry check failed", msg)
+            self._notify_error("expire_error", f"{APP_NAME}: expiry check failed",
+                               self._error_text(e), announce)
             return
         finally:
             self._busy.clear()
@@ -387,8 +410,10 @@ class ShatelMonApp:
             notify(APP_NAME, f"{self._quota_status}; {self._service_status}.", self.icon)
 
         while not self._stop.is_set():
+            wait_min = self._interval_minutes()
+            log.info("Next check in %d min", wait_min)
             try:
-                cmd = self._cmd_queue.get(timeout=self.cfg.check_interval_minutes * 60)
+                cmd = self._cmd_queue.get(timeout=wait_min * 60)
             except queue.Empty:
                 cmd = "all"
             if cmd == "quit":

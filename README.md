@@ -25,6 +25,13 @@ is in progress and turns **red** while an alert is active.
     of ending.
 - The website's pre-computed "total" row is **not** trusted — the total is computed from
   each package's own remaining figure (positive packages only).
+- **Adaptive interval:** when plenty of traffic remains (above `relaxed_traffic_threshold_mb`,
+  default 10 GB) and no alert is active, it checks every `relaxed_interval_minutes`
+  (default 6 h); once traffic drops below that or an alert is active, it checks every
+  `check_interval_minutes` (default 30 min).
+- **Fetch errors are reported:** if login fails, the network is down, or the report can't be
+  read, you get a clear notification (manual fetches always notify; periodic errors are
+  de-duplicated so a long outage won't spam you).
 - **All notifications are in English.**
 - **Single instance** only — launching a second copy shows a message and exits.
 - **First run** creates a config file with placeholders, tells you to fill it in, and exits.
@@ -73,13 +80,15 @@ username = YOUR_USERNAME
 password = YOUR_PASSWORD
 
 [settings]
-check_interval_minutes      = 30     ; how often to check (traffic AND service expiry)
-low_traffic_threshold_mb    = 2048   ; alert below this combined remaining (2 GB)
-expire_warning_days         = 3      ; alert when a package expires within N days
-service_expire_warning_days = 7      ; alert when the service period ends within N days
-notify_repeat_hours         = 6      ; don't repeat the same alert more often than this
-report                      = CurrentTrafficPackages
-notify_summary_on_startup   = false  ; show a one-off summary notification at startup
+check_interval_minutes       = 30     ; interval when traffic is low / an alert is active
+relaxed_interval_minutes     = 360    ; interval when plenty of traffic remains (6 h)
+relaxed_traffic_threshold_mb = 10240  ; "plenty" = combined remaining above this (10 GB)
+low_traffic_threshold_mb     = 2048   ; alert below this combined remaining (2 GB)
+expire_warning_days          = 3      ; alert when a package expires within N days
+service_expire_warning_days  = 7      ; alert when the service period ends within N days
+notify_repeat_hours          = 6      ; don't repeat the same alert more often than this
+report                       = CurrentTrafficPackages
+notify_summary_on_startup    = false  ; show a one-off summary notification at startup
 ```
 
 A UTF-8 BOM (added by some editors / PowerShell) is tolerated.

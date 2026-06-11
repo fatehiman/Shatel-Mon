@@ -1,7 +1,10 @@
 """Generates the ShatelMon tray icon: orange "SH" on a dark-blue solid triangle.
 
-- ``alert=True``     -> red triangle (a low-traffic / expiry warning is active).
+- ``alert=True``      -> red triangle (a low-traffic / expiry warning is active).
 - ``show_text=False`` -> draw the triangle only (used for the "processing" blink).
+
+The "SH" is sized to be as large as possible while still fitting inside the
+triangle, so it stays readable when Windows scales the icon down to ~16 px.
 """
 
 from __future__ import annotations
@@ -24,45 +27,51 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
-def _fit_font_size(draw: ImageDraw.ImageDraw, text: str,
-                   max_w: float, max_h: float) -> int:
-    """Largest font size whose rendered ``text`` fits within max_w x max_h."""
-    best = 6
-    for fs in range(6, 220):
-        font = _load_font(fs)
-        b = draw.textbbox((0, 0), text, font=font)
-        if (b[2] - b[0]) <= max_w and (b[3] - b[1]) <= max_h:
-            best = fs
-        else:
-            break
-    return best
-
-
 def make_icon(size: int = 64, alert: bool = False, show_text: bool = True) -> Image.Image:
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    # Render at high resolution then downscale, so the text edges stay smooth.
+    SS = 8 if size <= 64 else 4
+    W = size * SS
+    img = Image.new("RGBA", (W, W), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    # Bigger triangle: small padding so it nearly fills the canvas.
-    pad = max(1, round(size * 0.04))
-    apex = (size / 2, pad)
-    bottom_left = (pad, size - pad)
-    bottom_right = (size - pad, size - pad)
-    d.polygon([apex, bottom_left, bottom_right], fill=ALERT_RED if alert else DARK_BLUE)
+    # Big triangle: tiny padding so it nearly fills the canvas.
+    pad = max(1, round(W * 0.02))
+    apex_y = pad
+    base_y = W - pad
+    cx = W / 2
+    half_base = (W - 2 * pad) / 2.0
+    height = base_y - apex_y
+    d.polygon([(cx, apex_y), (pad, base_y), (W - pad, base_y)],
+              fill=ALERT_RED if alert else DARK_BLUE)
 
     if show_text:
         text = "SH"
-        # Place the text in the wide lower band of the triangle and size it
-        # to (almost) fill the triangle width available at that height.
-        cy = size * 0.64
-        frac = (cy - pad) / ((size - pad) - pad)            # 0..1 down the triangle
-        avail_w = frac * (size - 2 * pad) * 0.90
-        avail_h = size * 0.50
-        font = _load_font(_fit_font_size(d, text, avail_w, avail_h))
-        b = d.textbbox((0, 0), text, font=font)
-        tw, th = b[2] - b[0], b[3] - b[1]
-        pos = (size / 2 - tw / 2 - b[0], cy - th / 2 - b[1])
-        d.text(pos, text, font=font, fill=ORANGE)
-    return img
+        gap = max(1, round(W * 0.035))     # gap between the text and the base
+        margin = 0.95                      # use up to 95% of the available width
+        best = None
+        for fs in range(8, W):
+            font = _load_font(fs)
+            b = d.textbbox((0, 0), text, font=font)
+            tw, th = b[2] - b[0], b[3] - b[1]
+            cy = base_y - gap - th / 2.0           # sit the text low, near the base
+            top = cy - th / 2.0
+            if top <= apex_y or th > height * 0.82:
+                break
+            # measure available width a little below the very top (negligible overhang)
+            y_eval = top + th * 0.18
+            half_w = half_base * (y_eval - apex_y) / height
+            if tw <= 2 * half_w * margin:
+                best = (fs, cy, b)
+            else:
+                break                              # wider fonts won't fit either
+        if best:
+            fs, cy, b = best
+            font = _load_font(fs)
+            tw, th = b[2] - b[0], b[3] - b[1]
+            pos = (cx - tw / 2.0 - b[0], cy - th / 2.0 - b[1])
+            d.text(pos, text, font=font, fill=ORANGE)
+
+    return img.resize((size, size), Image.LANCZOS)
 
 
 def ensure_ico(path: str) -> str:
@@ -75,11 +84,12 @@ def ensure_ico(path: str) -> str:
 
 
 if __name__ == "__main__":
-    make_icon(64).save("icon_preview.png")
+    for s in (16, 24, 32, 64):
+        make_icon(s).save(f"icon_preview_{s}.png")
     make_icon(64, alert=True).save("icon_preview_alert.png")
     make_icon(64, show_text=False).save("icon_preview_blink.png")
     make_icon(256).save("ShatelMon.png")
     if os.path.exists("ShatelMon.ico"):
         os.remove("ShatelMon.ico")
     ensure_ico("ShatelMon.ico")
-    print("wrote previews + ShatelMon.png + ShatelMon.ico")
+    print("wrote previews (16/24/32/64) + alert + blink + ShatelMon.png + ShatelMon.ico")
