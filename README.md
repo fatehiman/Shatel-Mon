@@ -4,8 +4,8 @@ A tiny Windows **system-tray** app that periodically checks your [Shatel](https:
 internet account and raises a Windows notification when **traffic is running low** or the
 **current service period is about to expire**.
 
-The tray icon is **orange "SH" on a dark-blue solid triangle**; it turns **red** while an
-alert is active.
+The tray icon is **orange "SH" on a dark-blue solid triangle**; it **blinks** while a check
+is in progress and turns **red** while an alert is active.
 
 <p align="center"><img src="ShatelMon.png" width="96" alt="ShatelMon icon"></p>
 
@@ -16,7 +16,7 @@ alert is active.
 - On the same interval it also reads the **end of the current service period**
   (پایان دوره جاری), which is a **Jalali** date, converts it to Gregorian and computes the
   remaining days.
-- Raises a Windows toast when **any** of these is true:
+- Raises a Windows tray notification when **any** of these is true:
   - the **combined remaining traffic** of all packages drops below
     `low_traffic_threshold_mb` (default **2 GB**);
   - a traffic package that still has data left is within `expire_warning_days`
@@ -33,11 +33,13 @@ alert is active.
 
 | Item | Action |
 |------|--------|
-| **Fetch remaind quota now** | Check remaining traffic immediately |
-| **Fetch service expire date now** | Check the service expiry date immediately |
+| **Fetch remaind quota now** | Check remaining traffic immediately and show the result |
+| **Fetch service expire date now** | Check the service expiry date immediately and show the result |
 | **Exit** | Quit the app |
 
-Hovering the tray icon shows the current remaining traffic and service-end date.
+Each manual fetch always shows a notification with the result; the periodic background
+checks only notify when something needs attention. Hovering the tray icon shows the
+current remaining traffic and service-end date.
 
 ## Install & run
 
@@ -77,7 +79,7 @@ expire_warning_days         = 3      ; alert when a package expires within N day
 service_expire_warning_days = 7      ; alert when the service period ends within N days
 notify_repeat_hours         = 6      ; don't repeat the same alert more often than this
 report                      = CurrentTrafficPackages
-notify_summary_on_startup   = false  ; show a one-off summary toast at startup
+notify_summary_on_startup   = false  ; show a one-off summary notification at startup
 ```
 
 A UTF-8 BOM (added by some editors / PowerShell) is tolerated.

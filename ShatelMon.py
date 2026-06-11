@@ -27,7 +27,7 @@ from logging.handlers import RotatingFileHandler
 import pystray
 
 import config as cfgmod
-from icon import make_icon, ensure_ico
+from icon import make_icon
 from shatel_client import (ShatelClient, ShatelError, LoginError, Package,
                            ServiceExpiry, total_remaining_mb)
 
@@ -57,8 +57,8 @@ def base_dir() -> str:
 BASE = base_dir()
 CONFIG_PATH = os.path.join(BASE, cfgmod.CONFIG_NAME)
 LOG_PATH = os.path.join(BASE, "ShatelMon.log")
-ICO_PATH = os.path.join(BASE, "ShatelMon.ico")
-PNG_PATH = os.path.join(BASE, "ShatelMon.png")
+
+BLINK_INTERVAL = 0.45   # seconds between "SH" on/off frames while processing
 
 log = logging.getLogger("shatelmon")
 
@@ -131,20 +131,19 @@ def pkg_label(p: Package) -> str:
 # --------------------------------------------------------------------------- #
 
 def notify(title: str, message: str, icon=None) -> None:
-    """Show a Windows toast (winotify), falling back to the tray balloon."""
-    try:
-        from winotify import Notification
-        toast = Notification(app_id=APP_NAME, title=title, msg=message,
-                             icon=PNG_PATH if os.path.exists(PNG_PATH) else "")
-        toast.show()
-        return
-    except Exception as e:  # noqa: BLE001
-        log.warning("winotify failed (%s); using tray balloon", e)
+    """Show a notification using the tray icon's balloon (Shell_NotifyIcon).
+
+    This is the reliable path for a tray app: unlike Windows toasts via an
+    unregistered AppUserModelID (which Windows silently drops), the tray balloon
+    always shows as long as notifications are enabled."""
     try:
         if icon is not None:
             icon.notify(message, title)
+            log.info("Notified: %s — %s", title, message)
+            return
     except Exception as e:  # noqa: BLE001
         log.warning("tray balloon failed: %s", e)
+    log.info("Notification (not shown): %s — %s", title, message)
 
 
 # --------------------------------------------------------------------------- #
@@ -207,9 +206,6 @@ def evaluate_service_alert(exp: ServiceExpiry, cfg: cfgmod.Config):
 class ShatelMonApp:
     def __init__(self, cfg: cfgmod.Config):
         self.cfg = cfg
-        ensure_ico(ICO_PATH)
-        if not os.path.exists(PNG_PATH):
-            make_icon(256).save(PNG_PATH)
 
         self.client: ShatelClient | None = None
         self._quota_status = "checking quota…"
@@ -221,6 +217,7 @@ class ShatelMonApp:
         self._stop = threading.Event()
         self._cmd_queue: queue.Queue[str] = queue.Queue()
         self._last_notified: dict[str, float] = {}
+        self._busy = threading.Event()          # set while a fetch is in progress
 
         self.icon = pystray.Icon(APP_ID, make_icon(64), APP_NAME, menu=self._build_menu())
 
@@ -234,32 +231,51 @@ class ShatelMonApp:
         )
 
     def on_fetch_quota(self, icon, item):
-        self._cmd_queue.put("quota")
+        self._cmd_queue.put("quota")        # manual -> announce result
 
     def on_fetch_expire(self, icon, item):
-        self._cmd_queue.put("expire")
+        self._cmd_queue.put("expire")       # manual -> announce result
 
     def on_exit(self, icon, item):
         log.info("Exit requested")
         self._stop.set()
+        self._busy.clear()
         self._cmd_queue.put("quit")
         icon.stop()
 
     # -- icon / tooltip --------------------------------------------------------
 
+    def _set_icon_image(self, alert: bool, show_text: bool = True):
+        try:
+            self.icon.icon = make_icon(64, alert=alert, show_text=show_text)
+        except Exception:  # noqa: BLE001  (icon loop may not be ready yet)
+            pass
+
     def _refresh_icon(self):
-        alert = bool(self._quota_alert_keys) or self._service_alert_active
-        if alert != self._in_alert:
-            self._in_alert = alert
-            try:
-                self.icon.icon = make_icon(64, alert=alert)
-            except Exception:  # noqa: BLE001
-                pass
+        """Set the steady icon (normal/red) and update the tooltip. Skipped while
+        the processing animation owns the icon."""
+        self._in_alert = bool(self._quota_alert_keys) or self._service_alert_active
+        if not self._busy.is_set():
+            self._set_icon_image(self._in_alert, show_text=True)
         title = f"{APP_NAME} — {self._quota_status} · {self._service_status}"
         try:
             self.icon.title = title[:127]
-        except Exception:  # noqa: BLE001  (icon loop may not be ready yet)
+        except Exception:  # noqa: BLE001
             pass
+
+    def _animator(self):
+        """Blink the 'SH' on/off while a fetch is running, to convey 'processing'."""
+        blink_on = False
+        while not self._stop.is_set():
+            if self._busy.is_set():
+                blink_on = not blink_on
+                self._set_icon_image(self._in_alert, show_text=blink_on)
+                self._stop.wait(BLINK_INTERVAL)
+            else:
+                # idle: wait until the next fetch starts (or we stop)
+                while not self._busy.is_set() and not self._stop.is_set():
+                    if self._stop.wait(0.2):
+                        break
 
     # -- notifications with de-dup --------------------------------------------
 
@@ -279,24 +295,28 @@ class ShatelMonApp:
 
     # -- the two checks --------------------------------------------------------
 
-    def check_quota(self):
+    def check_quota(self, announce: bool = False):
+        self._busy.set()
         try:
             packages = self._client_or_new().get_packages()
         except LoginError as e:
             self.client = None
             log.error("Quota login error: %s", e)
             self._quota_status = "login failed"
-            self._refresh_icon()
-            self.maybe_notify("login_error", f"{APP_NAME}: login failed", str(e))
+            notify(f"{APP_NAME}: login failed", str(e), self.icon) if announce \
+                else self.maybe_notify("login_error", f"{APP_NAME}: login failed", str(e))
             return
         except Exception as e:  # noqa: BLE001
             self.client = None
             log.error("Quota check failed: %s", e)
             self._quota_status = "quota check failed"
-            self._refresh_icon()
-            self.maybe_notify("quota_error", f"{APP_NAME}: quota check failed",
-                              f"Could not read the traffic report: {e}")
+            msg = f"Could not read the traffic report: {e}"
+            notify(f"{APP_NAME}: quota check failed", msg, self.icon) if announce \
+                else self.maybe_notify("quota_error", f"{APP_NAME}: quota check failed", msg)
             return
+        finally:
+            self._busy.clear()
+            self._refresh_icon()
 
         alerts, total = evaluate_quota_alerts(packages, self.cfg)
         self._quota_status = f"{fmt_traffic(total)} left"
@@ -305,39 +325,56 @@ class ShatelMonApp:
             self._last_notified.pop(k, None)
         self._quota_alert_keys = new_keys
         self._refresh_icon()
-        for key, title, message in alerts:
-            self.maybe_notify(key, title, message)
         log.info("Quota: total=%.1f MB, alerts=%d", total, len(alerts))
 
-    def check_service_expire(self):
+        if announce:
+            npkg = sum(1 for p in packages if not p.is_excess)
+            extra = f"  ⚠ {alerts[0][2]}" if alerts else ""
+            notify(f"{APP_NAME}: remaining traffic",
+                   f"{fmt_traffic(total)} remaining across {npkg} package(s).{extra}",
+                   self.icon)
+        for key, title, message in alerts:
+            self.maybe_notify(key, title, message)
+
+    def check_service_expire(self, announce: bool = False):
+        self._busy.set()
         try:
             exp = self._client_or_new().get_service_expiry()
         except LoginError as e:
             self.client = None
             log.error("Service-expiry login error: %s", e)
             self._service_status = "login failed"
-            self._refresh_icon()
-            self.maybe_notify("login_error", f"{APP_NAME}: login failed", str(e))
+            notify(f"{APP_NAME}: login failed", str(e), self.icon) if announce \
+                else self.maybe_notify("login_error", f"{APP_NAME}: login failed", str(e))
             return
         except Exception as e:  # noqa: BLE001
             self.client = None
             log.error("Service-expiry check failed: %s", e)
             self._service_status = "expiry check failed"
-            self._refresh_icon()
-            self.maybe_notify("expire_error", f"{APP_NAME}: expiry check failed",
-                              f"Could not read the service expiry date: {e}")
+            msg = f"Could not read the service expiry date: {e}"
+            notify(f"{APP_NAME}: expiry check failed", msg, self.icon) if announce \
+                else self.maybe_notify("expire_error", f"{APP_NAME}: expiry check failed", msg)
             return
+        finally:
+            self._busy.clear()
+            self._refresh_icon()
 
         alert = evaluate_service_alert(exp, self.cfg)
         self._service_status = f"service ends {exp.gregorian.isoformat()} ({exp.remaining_days}d)"
         self._service_alert_active = alert is not None
-        if alert:
-            self.maybe_notify(*alert)
-        else:
-            self._last_notified.pop("service_expire", None)
         self._refresh_icon()
         log.info("Service expiry: %s (Gregorian %s), %d days left",
                  exp.jalali, exp.gregorian.isoformat(), exp.remaining_days)
+
+        if announce:
+            notify(f"{APP_NAME}: service expiry",
+                   f"Service period ends on {exp.gregorian.isoformat()} "
+                   f"(Jalali {exp.jalali}) — {exp.remaining_days} day(s) left.",
+                   self.icon)
+        if alert:
+            self.maybe_notify(*alert)
+        elif not announce:
+            self._last_notified.pop("service_expire", None)
 
     # -- worker loop -----------------------------------------------------------
 
@@ -358,18 +395,18 @@ class ShatelMonApp:
                 break
             try:
                 if cmd in ("quota", "all"):
-                    self.check_quota()
+                    self.check_quota(announce=(cmd == "quota"))
                 if cmd in ("expire", "all"):
-                    self.check_service_expire()
+                    self.check_service_expire(announce=(cmd == "expire"))
             except Exception as e:  # noqa: BLE001
                 log.exception("Unexpected error during check: %s", e)
 
     def run(self):
-        # Start the background checker directly rather than via pystray's `setup`
+        # Start the background threads directly rather than via pystray's `setup`
         # callback: the callback does not fire reliably in a frozen (PyInstaller
-        # --windowed) build, whereas a plain thread started here always runs.
-        t = threading.Thread(target=self._worker, name="checker", daemon=True)
-        t.start()
+        # --windowed) build, whereas plain threads started here always run.
+        threading.Thread(target=self._animator, name="animator", daemon=True).start()
+        threading.Thread(target=self._worker, name="checker", daemon=True).start()
         self.icon.run()
 
 
