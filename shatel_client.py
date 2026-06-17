@@ -28,8 +28,13 @@ from dataclasses import dataclass
 from urllib.parse import urlparse, parse_qs
 
 import requests
+import urllib3
 
 from jalali import jalali_str_to_gregorian
+
+# We intentionally skip TLS verification (see ShatelClient._new_session), so
+# silence the per-request InsecureRequestWarning it would otherwise emit.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 log = logging.getLogger("shatelmon.client")
 
@@ -140,6 +145,9 @@ class ShatelClient:
         s = requests.Session()
         s.headers.update({"User-Agent": USER_AGENT,
                           "Accept-Language": "fa,en;q=0.8"})
+        # Shatel occasionally serves an invalid/misconfigured certificate on the
+        # report endpoints; skip TLS verification so the quota fetch still works.
+        s.verify = False
         return s
 
     # -- login -----------------------------------------------------------------
