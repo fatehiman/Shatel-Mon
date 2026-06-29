@@ -272,6 +272,41 @@ class ShatelClient:
                              timeout=self.timeout)
         return r.text
 
+    # -- connection status -----------------------------------------------------
+
+    def get_connection_status(self, relogin: bool = True) -> bool | None:
+        """Read 'وضعیت اتصال(PPPOE)' from the dashboard. Returns True if connected,
+        False if disconnected, or None if the status could not be found."""
+        if not self.session or not self.guid:
+            self.login()
+        html = self._fetch_home_html()
+        status = self._parse_connection_status(html)
+        if status is None and relogin:
+            log.info("Connection status not found; re-authenticating and retrying once")
+            self.session = self.guid = None
+            self.login()
+            html = self._fetch_home_html()
+            status = self._parse_connection_status(html)
+        return status
+
+    @staticmethod
+    def _parse_connection_status(html: str) -> bool | None:
+        # وضعیت اتصال(PPPOE): قطع  (disconnected)  /  وصل / متصل (connected)
+        # The value may sit in a sibling tag, so look at a short window of text
+        # following the label rather than stopping at the first closing tag.
+        m = re.search(r"وضعیت\s*اتصال\s*\(?\s*PPPO?E\s*\)?\s*[:：]?(.{0,200})",
+                      html, re.S | re.I)
+        if not m:
+            return None
+        text = _strip_tags(m.group(1))
+        # "قطع" (disconnected) is the more specific token; check it first because
+        # "وصل" is a substring of "متصل" but the disconnected wording is distinct.
+        if "قطع" in text:
+            return False
+        if "وصل" in text or "متصل" in text:
+            return True
+        return None
+
     @staticmethod
     def _parse_service_expiry(html: str) -> ServiceExpiry | None:
         # <span for="BuildUpTo">پایان دوره جاری:</span> ... <strong> 1405/09/27</strong>

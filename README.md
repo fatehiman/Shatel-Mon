@@ -26,6 +26,8 @@ is active.
     of ending.
 - The website's pre-computed "total" row is **not** trusted — the total is computed from
   each package's own remaining figure (positive packages only).
+- Reads the **PPPOE connection status** (وضعیت اتصال) from the dashboard and includes it
+  on a new line of the remaining-traffic notification as **Connected** / **Disconnected**.
 - **Adaptive interval:** when plenty of traffic remains (above `relaxed_traffic_threshold_mb`,
   default 10 GB) and no alert is active, it checks every `relaxed_interval_minutes`
   (default 6 h); once traffic drops below that or an alert is active, it checks every

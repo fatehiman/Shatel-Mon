@@ -344,6 +344,17 @@ class ShatelMonApp:
             self._busy.clear()
             self._refresh_icon()
 
+        # Also read the PPPOE connection status (best-effort; never fails the check).
+        conn_text = ""
+        try:
+            connected = self._client_or_new().get_connection_status()
+            if connected is True:
+                conn_text = "Connection (PPPOE): Connected"
+            elif connected is False:
+                conn_text = "Connection (PPPOE): Disconnected"
+        except Exception as e:  # noqa: BLE001
+            log.warning("Could not read connection status: %s", e)
+
         alerts, total = evaluate_quota_alerts(packages, self.cfg)
         self._last_total_mb = total
         self._quota_status = f"{fmt_traffic(total)} left"
@@ -357,8 +368,9 @@ class ShatelMonApp:
         if announce:
             npkg = sum(1 for p in packages if not p.is_excess)
             extra = f"  ⚠ {alerts[0][2]}" if alerts else ""
+            conn_line = f"\n{conn_text}" if conn_text else ""
             notify(f"{APP_NAME}: remaining traffic",
-                   f"{fmt_traffic(total)} remaining across {npkg} package(s).{extra}",
+                   f"{fmt_traffic(total)} remaining across {npkg} package(s).{extra}{conn_line}",
                    self.icon)
         for key, title, message in alerts:
             self.maybe_notify(key, title, message)
