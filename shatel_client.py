@@ -291,21 +291,31 @@ class ShatelClient:
 
     @staticmethod
     def _parse_connection_status(html: str) -> bool | None:
-        # وضعیت اتصال(PPPOE): قطع  (disconnected)  /  وصل / متصل (connected)
-        # The value may sit in a sibling tag, so look at a short window of text
-        # following the label rather than stopping at the first closing tag.
-        m = re.search(r"وضعیت\s*اتصال\s*\(?\s*PPPO?E\s*\)?\s*[:：]?(.{0,200})",
+        """Read the PPPOE connection status from the dashboard.
+
+        The dashboard renders it as:
+            <span for="HasCurrentConnection">وضعیت اتصال(PPPOE):</span></strong>
+            <a href="...UsagePPPOEReport">[100.84.47.237]</a>   when CONNECTED
+        i.e. the value after the label is the assigned IP in brackets. When the
+        line is down it instead shows the word "قطع" (disconnected). So: an IP /
+        non-empty value -> connected; "قطع" -> disconnected.
+        """
+        # Anchor on the label and grab the rendered value that follows it.
+        m = re.search(r'for="HasCurrentConnection".*?</span>\s*</strong>(.*?)</li>',
                       html, re.S | re.I)
+        if not m:
+            # Fall back to matching by the visible label text.
+            m = re.search(r"وضعیت\s*اتصال\s*\(?\s*PPPO?E\s*\)?\s*[:：]?(.{0,300}?)</li>",
+                          html, re.S | re.I)
         if not m:
             return None
         text = _strip_tags(m.group(1))
-        # "قطع" (disconnected) is the more specific token; check it first because
-        # "وصل" is a substring of "متصل" but the disconnected wording is distinct.
         if "قطع" in text:
             return False
-        if "وصل" in text or "متصل" in text:
+        if re.search(r"\d{1,3}(?:\.\d{1,3}){3}", text) or "وصل" in text or "متصل" in text:
             return True
-        return None
+        # A non-empty value that isn't the disconnected word implies connected.
+        return True if text else None
 
     @staticmethod
     def _parse_service_expiry(html: str) -> ServiceExpiry | None:
