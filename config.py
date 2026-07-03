@@ -55,6 +55,40 @@ report = CurrentTrafficPackages
 
 ; Show a normal (non-alert) summary notification once at startup.
 notify_summary_on_startup = false
+
+[purchase]
+; Automatically buy more traffic when the combined remaining traffic drops
+; below auto_purchase_threshold_gb. The card details are read from the
+; external file at payment_info_path (never stored here); the app fills the
+; card number / CVV2 / expiry and requests the dynamic password, then WAITS for
+; you to enter the CAPTCHA + dynamic password and click Pay in the browser.
+enabled = true
+
+; Buy when the combined remaining traffic drops below this many GB.
+auto_purchase_threshold_gb = 2
+
+; Full path to the file holding the card details (key=value lines:
+; cardno=..., cvv=..., exp-month=.., exp-year=..). Keep this file OUTSIDE the
+; project; only this path is stored here.
+payment_info_path = E:\appServices\paymentInfo\am-saman-expence.txt
+
+; Chrome profile directory reused across purchases (keeps you logged in and makes
+; the browser look like normal Chrome). Leave blank for the default under
+; %LOCALAPPDATA%\ShatelMon\chrome-profile.
+chrome_profile_dir =
+
+; The bank to pay through, as shown on Shatel's payment page.
+bank_name = بانک پارسیان
+
+; CSS selector of the traffic package to buy (the one picked while recording).
+package_selector = div:nth-child(2) > .row > .radio-box-new > .col-9-large > .desc
+
+; How long (minutes) to wait for you to enter the CAPTCHA/OTP and click Pay
+; before giving up (the browser is left open either way).
+payment_wait_minutes = 10
+
+; Don't start another automatic purchase within this many hours of the last one.
+purchase_cooldown_hours = 6
 """
 
 
@@ -71,6 +105,15 @@ class Config:
     notify_repeat_hours: float = 6.0
     report: str = "CurrentTrafficPackages"
     notify_summary_on_startup: bool = False
+    # -- purchase --
+    auto_purchase_enabled: bool = True
+    auto_purchase_threshold_mb: float = 2048.0
+    payment_info_path: str = ""
+    chrome_profile_dir: str = ""
+    bank_name: str = "بانک پارسیان"
+    package_selector: str = "div:nth-child(2) > .row > .radio-box-new > .col-9-large > .desc"
+    payment_wait_minutes: int = 10
+    purchase_cooldown_hours: float = 6.0
     path: str = ""
 
     @property
@@ -92,6 +135,7 @@ def load(path: str) -> Config:
     cp.read(path, encoding="utf-8-sig")
     cred = cp["credentials"] if cp.has_section("credentials") else {}
     s = cp["settings"] if cp.has_section("settings") else {}
+    p = cp["purchase"] if cp.has_section("purchase") else {}
 
     def getf(section, key, default):
         try:
@@ -118,5 +162,14 @@ def load(path: str) -> Config:
         notify_repeat_hours=getf(s, "notify_repeat_hours", 6),
         report=(s.get("report", "CurrentTrafficPackages").strip() if s else "CurrentTrafficPackages"),
         notify_summary_on_startup=getb(s, "notify_summary_on_startup", "false"),
+        auto_purchase_enabled=getb(p, "enabled", "true"),
+        auto_purchase_threshold_mb=getf(p, "auto_purchase_threshold_gb", 2) * 1024.0,
+        payment_info_path=(p.get("payment_info_path", "").strip() if p else ""),
+        chrome_profile_dir=(p.get("chrome_profile_dir", "").strip() if p else ""),
+        bank_name=(p.get("bank_name", "بانک پارسیان").strip() if p else "بانک پارسیان"),
+        package_selector=(p.get("package_selector", Config.package_selector).strip()
+                          if p else Config.package_selector),
+        payment_wait_minutes=max(1, geti(p, "payment_wait_minutes", 10)),
+        purchase_cooldown_hours=getf(p, "purchase_cooldown_hours", 6),
         path=path,
     )

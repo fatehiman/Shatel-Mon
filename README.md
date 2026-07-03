@@ -35,6 +35,14 @@ is active.
 - **Fetch errors are reported:** if login fails, the network is down, or the report can't be
   read, you get a clear notification (manual fetches always notify; periodic errors are
   de-duplicated so a long outage won't spam you).
+- **Auto-buys traffic** when the combined remaining traffic drops below
+  `auto_purchase_threshold_gb` (default **2 GB**). It drives a **real Chrome**
+  (via Playwright, not headless — so the bank sees a normal Windows 11 browser),
+  logs in, selects the configured package, chooses the bank, and fills the card
+  number / CVV2 / expiry from an **external file**. Payment stays **human-in-the-loop**:
+  the app requests the dynamic password (OTP) and then waits for **you** to enter
+  the CAPTCHA + OTP and click **Pay**, after which it finishes the purchase on the
+  Shatel side automatically. See [Automatic traffic purchase](#automatic-traffic-purchase).
 - **All notifications are in English.**
 - **Single instance** only — launching a second copy shows a message and exits.
 - **First run** creates a config file with placeholders, tells you to fill it in, and exits.
@@ -45,6 +53,7 @@ is active.
 |------|--------|
 | **Fetch remaind quota now** | Check remaining traffic immediately and show the result |
 | **Fetch service expire date now** | Check the service expiry date immediately and show the result |
+| **Buy traffic now** | Start a traffic purchase immediately (opens Chrome; you enter the OTP and pay) |
 | **Exit** | Quit the app |
 
 Each manual fetch always shows a notification with the result; the periodic background
@@ -96,6 +105,51 @@ notify_summary_on_startup    = false  ; show a one-off summary notification at s
 
 A UTF-8 BOM (added by some editors / PowerShell) is tolerated.
 
+## Automatic traffic purchase
+
+When the combined remaining traffic drops below `auto_purchase_threshold_gb`
+(default **2 GB**), ShatelMon buys more traffic for you. You can also trigger it
+any time from the tray menu (**Buy traffic now**).
+
+**How it works**
+
+1. It drives your **installed Chrome** through [Playwright](https://playwright.dev/python/)
+   with a **persistent profile** under `%LOCALAPPDATA%\ShatelMon\chrome-profile`
+   — *not* headless, so the payment gateway sees a normal Windows 11 Chrome
+   (genuine User-Agent + client hints). The profile keeps you logged in between
+   purchases.
+2. It logs in (if needed), opens **خرید ترافیک**, selects the package named by
+   `package_selector`, and continues to the bank chosen by `bank_name`.
+3. On the bank gateway it fills the **card number**, **CVV2** and **expiry**
+   from the file at `payment_info_path`, and clicks *request dynamic password*
+   (رمز پویا) if that button exists.
+4. It then **waits for you**: enter the CAPTCHA (کد امنیتی) and the dynamic
+   password (رمز دوم کارت) in the browser and click **Pay** (پرداخت). Your money
+   is never spent without you.
+5. When the gateway shows *پرداخت با موفقیت انجام شد*, it clicks **ادامه** to
+   finish the purchase back on Shatel.
+
+If the automation stalls or you take too long, the browser window is **left
+open** so you can finish or inspect the payment manually — it is never closed
+mid-payment.
+
+**The payment file** (`payment_info_path`) is a plain `key=value` file kept
+**outside** the project — only its *path* is stored in `ShatelMon.conf`:
+
+```ini
+cardno=6219861073116864
+cvv=475
+exp-month=09
+exp-year=07
+```
+
+**Requirements:** `pip install playwright` (already in `requirements.txt`) and a
+normal Google **Chrome** install. No `playwright install` browser download is
+needed — it uses your system Chrome (`channel="chrome"`).
+
+**Turn it off** by setting `enabled = false` in the `[purchase]` section; the
+**Buy traffic now** menu item still works.
+
 ## Build the `.exe` yourself
 
 ```powershell
@@ -108,6 +162,7 @@ build.bat            # -> dist\ShatelMon.exe
 | File | Purpose |
 |------|---------|
 | `ShatelMon.py` | Tray app: icon, periodic checks, menu, notifications, single-instance, first-run |
+| `purchase.py` | Automated traffic purchase + payment (Playwright / real Chrome) |
 | `shatel_client.py` | Login + traffic report + service-expiry fetch/parse |
 | `jalali.py` | Jalali → Gregorian date conversion (no dependency) |
 | `config.py` | Reads/creates `ShatelMon.conf` |

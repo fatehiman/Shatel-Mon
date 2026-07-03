@@ -28,6 +28,7 @@ import pystray
 import requests
 
 import config as cfgmod
+import purchase
 from icon import make_icon
 from shatel_client import (ShatelClient, ShatelError, LoginError, Package,
                            ServiceExpiry, total_remaining_mb)
@@ -220,6 +221,8 @@ class ShatelMonApp:
         self._last_notified: dict[str, float] = {}
         self._busy = threading.Event()          # set while a fetch is in progress
         self._last_total_mb: float | None = None  # last known combined remaining
+        self._purchase_in_progress = threading.Event()  # set while buying traffic
+        self._last_purchase_ts: float | None = None      # monotonic time of last attempt
 
         self.icon = pystray.Icon(APP_ID, make_icon(64), APP_NAME, menu=self._build_menu())
 
@@ -229,6 +232,7 @@ class ShatelMonApp:
         return pystray.Menu(
             pystray.MenuItem("Fetch remaind quota now", self.on_fetch_quota, default=True),
             pystray.MenuItem("Fetch service expire date now", self.on_fetch_expire),
+            pystray.MenuItem("Buy traffic now", self.on_buy_traffic),
             pystray.MenuItem("Exit", self.on_exit),
         )
 
@@ -237,6 +241,9 @@ class ShatelMonApp:
 
     def on_fetch_expire(self, icon, item):
         self._cmd_queue.put("expire")       # manual -> announce result
+
+    def on_buy_traffic(self, icon, item):
+        self._cmd_queue.put("buy")          # manual -> start a purchase
 
     def on_exit(self, icon, item):
         log.info("Exit requested")
@@ -365,6 +372,15 @@ class ShatelMonApp:
         self._refresh_icon()
         log.info("Quota: total=%.1f MB, alerts=%d", total, len(alerts))
 
+        # Auto-buy traffic when it runs low (payment still needs the user's OTP).
+        if (self.cfg.auto_purchase_enabled
+                and total < self.cfg.auto_purchase_threshold_mb
+                and not self._purchase_in_progress.is_set()
+                and self._purchase_cooldown_ok()):
+            log.info("Traffic %.0f MB below purchase threshold %.0f MB -> auto-purchase",
+                     total, self.cfg.auto_purchase_threshold_mb)
+            self._start_purchase(manual=False)
+
         if announce:
             npkg = sum(1 for p in packages if not p.is_excess)
             extra = f"  ⚠ {alerts[0][2]}" if alerts else ""
@@ -411,6 +427,47 @@ class ShatelMonApp:
         elif not announce:
             self._last_notified.pop("service_expire", None)
 
+    # -- automated purchase ----------------------------------------------------
+
+    def _purchase_cooldown_ok(self) -> bool:
+        if self._last_purchase_ts is None:
+            return True
+        elapsed = time.monotonic() - self._last_purchase_ts
+        return elapsed >= self.cfg.purchase_cooldown_hours * 3600
+
+    def _start_purchase(self, manual: bool = False):
+        """Kick off a purchase in its own thread so checks keep running."""
+        if self._purchase_in_progress.is_set():
+            if manual:
+                notify(f"{APP_NAME}: purchase", "A purchase is already in progress.", self.icon)
+            return
+        self._purchase_in_progress.set()
+        self._last_purchase_ts = time.monotonic()   # cooldown counts from the attempt
+        threading.Thread(target=self._run_purchase, args=(manual,),
+                         name="purchase", daemon=True).start()
+
+    def _run_purchase(self, manual: bool):
+        try:
+            notify(f"{APP_NAME}: buying traffic",
+                   "Opening Chrome to buy more traffic — you'll enter the CAPTCHA/OTP "
+                   "and click Pay when prompted.", self.icon)
+            purchase.run_purchase(
+                self.cfg,
+                on_status=lambda m: notify(f"{APP_NAME}: buying traffic", m, self.icon),
+            )
+            self._last_purchase_ts = time.monotonic()
+            notify(f"{APP_NAME}: purchase complete",
+                   "Traffic purchase finished. Refreshing your quota…", self.icon)
+            self._cmd_queue.put("quota_bg")   # refresh the tooltip without a popup
+        except purchase.PurchaseError as e:
+            notify(f"{APP_NAME}: purchase failed", str(e), self.icon)
+        except Exception as e:  # noqa: BLE001
+            log.exception("Purchase error: %s", e)
+            notify(f"{APP_NAME}: purchase failed",
+                   f"Could not complete the automatic purchase: {e}", self.icon)
+        finally:
+            self._purchase_in_progress.clear()
+
     # -- worker loop -----------------------------------------------------------
 
     def _worker(self):
@@ -430,8 +487,11 @@ class ShatelMonApp:
                 cmd = "all"
             if cmd == "quit":
                 break
+            if cmd == "buy":
+                self._start_purchase(manual=True)
+                continue
             try:
-                if cmd in ("quota", "all"):
+                if cmd in ("quota", "quota_bg", "all"):
                     self.check_quota(announce=(cmd == "quota"))
                 if cmd in ("expire", "all"):
                     self.check_service_expire(announce=(cmd == "expire"))
