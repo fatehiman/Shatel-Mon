@@ -227,6 +227,9 @@ def run_purchase(cfg, on_status: Callable[[str], None] | None = None) -> None:
         if not clicked:
             page.locator(cfg.package_selector).first.click()
 
+        # move from the package list on to the bank selection
+        _click_pay_and_complete(page)
+
         # --- choose the bank and confirm ---
         status("Choosing the bank…")
         bank = page.get_by_text(cfg.bank_name)
