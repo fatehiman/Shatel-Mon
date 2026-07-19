@@ -41,7 +41,10 @@ chrome_profile_dir =
 ; The bank to pay through, as shown on Shatel's payment page.
 bank_name = بانک پارسیان
 
-; CSS selector of the traffic package to buy (the one picked while recording).
+; The traffic package to buy, matched by its visible text on the purchase page.
+package_text = ۱۰۰ گیگابایت ترافیک ۱۵ روزه
+
+; Fallback CSS selector for the package, used only if package_text isn't found.
 package_selector = div:nth-child(2) > .row > .radio-box-new > .col-9-large > .desc
 
 ; How long (minutes) to wait for you to enter the CAPTCHA/OTP and click Pay
@@ -116,6 +119,7 @@ class Config:
     payment_info_path: str = ""
     chrome_profile_dir: str = ""
     bank_name: str = "بانک پارسیان"
+    package_text: str = "۱۰۰ گیگابایت ترافیک ۱۵ روزه"
     package_selector: str = "div:nth-child(2) > .row > .radio-box-new > .col-9-large > .desc"
     payment_wait_minutes: int = 10
     purchase_cooldown_hours: float = 6.0
@@ -184,6 +188,8 @@ def load(path: str) -> Config:
         payment_info_path=(p.get("payment_info_path", "").strip() if p else ""),
         chrome_profile_dir=(p.get("chrome_profile_dir", "").strip() if p else ""),
         bank_name=(p.get("bank_name", "بانک پارسیان").strip() if p else "بانک پارسیان"),
+        package_text=(p.get("package_text", Config.package_text).strip()
+                      if p else Config.package_text),
         package_selector=(p.get("package_selector", Config.package_selector).strip()
                           if p else Config.package_selector),
         payment_wait_minutes=max(1, geti(p, "payment_wait_minutes", 10)),

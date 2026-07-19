@@ -58,6 +58,34 @@ class PurchaseError(Exception):
     """Raised when the automated purchase cannot be completed."""
 
 
+def _session_guid(page) -> str:
+    """The 32-hex session id that prefixes every my.shatel.ir report/service URL.
+
+    When the traffic runs out Shatel redirects the dashboard to
+    ``/{guid}/Message/FinishedTraffic`` — so the id is usually right there in the
+    URL; otherwise we dig it out of the page's own links.
+    """
+    m = re.search(r"/([a-f0-9]{32})/", page.url)
+    if m:
+        return m.group(1)
+    m = re.search(r"/([a-f0-9]{32})/", page.content())
+    if m:
+        return m.group(1)
+    raise PurchaseError("Could not determine the Shatel session id from the page")
+
+
+def _click_pay_and_complete(page) -> None:
+    """Click the "پرداخت و تکمیل خرید" control (it's a link on some pages, a
+    button on others)."""
+    for getter in (lambda: page.get_by_role("link", name="پرداخت و تکمیل خرید"),
+                   lambda: page.get_by_role("button", name="پرداخت و تکمیل خرید")):
+        el = getter()
+        if el.count():
+            el.first.click()
+            return
+    raise PurchaseError("Could not find the 'پرداخت و تکمیل خرید' control")
+
+
 @dataclass
 class PaymentInfo:
     card_number: str   # 16 digits, no separators
@@ -165,20 +193,39 @@ def run_purchase(cfg, on_status: Callable[[str], None] | None = None) -> None:
             page.get_by_role("button", name="ورود", exact=True).click()
             page.wait_for_url("**my.shatel.ir/**", timeout=60_000)
 
+        # --- go straight to the purchase page ---
+        # When the traffic is used up the dashboard redirects to
+        # /{guid}/Message/FinishedTraffic; either way we jump directly to the
+        # PurchaseTraffic page for the current session and pick the package there.
+        guid = _session_guid(page)
+        status("Opening the purchase page…")
+        page.goto(f"https://my.shatel.ir/{guid}/Service/PurchaseTraffic",
+                  wait_until="domcontentloaded")
+
         # --- select the (fixed) traffic package ---
         status("Selecting the traffic package…")
-        buy = page.get_by_role("link", name="خرید ترافیک")
-        (buy.nth(1) if buy.count() > 1 else buy.first).click()
-        page.locator(cfg.package_selector).first.click()
-        page.get_by_role("button", name="پرداخت و تکمیل خرید").click()
+        clicked = False
+        if cfg.package_text:
+            pkg = page.get_by_text(cfg.package_text)
+            try:
+                pkg.first.wait_for(timeout=30_000)
+                pkg.first.click()
+                clicked = True
+            except PWTimeout:
+                pass
+        if not clicked:
+            page.locator(cfg.package_selector).first.click()
 
         # --- choose the bank and confirm ---
         status("Choosing the bank…")
         bank = page.get_by_text(cfg.bank_name)
         bank.first.wait_for(timeout=60_000)
         bank.first.click()
-        page.get_by_role("link", name="پرداخت و تکمیل خرید").click()
-        page.get_by_role("button", name="تایید").click()
+        _click_pay_and_complete(page)
+        try:
+            page.get_by_role("button", name="تایید").click(timeout=15_000)
+        except PWTimeout:
+            pass  # no confirmation step on this variant of the page
 
         # --- bank gateway: fill card details ---
         status("Filling the card details…")
