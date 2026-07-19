@@ -63,14 +63,25 @@ def _session_guid(page) -> str:
 
     When the traffic runs out Shatel redirects the dashboard to
     ``/{guid}/Message/FinishedTraffic`` — so the id is usually right there in the
-    URL; otherwise we dig it out of the page's own links.
+    URL; otherwise we dig it out of the page's own links. The dashboard may still
+    be mid-redirect when we're called, so wait for it to settle and tolerate
+    in-flight navigations.
     """
-    m = re.search(r"/([a-f0-9]{32})/", page.url)
-    if m:
-        return m.group(1)
-    m = re.search(r"/([a-f0-9]{32})/", page.content())
-    if m:
-        return m.group(1)
+    try:
+        page.wait_for_load_state("networkidle", timeout=15_000)
+    except Exception:  # noqa: BLE001
+        pass
+    for _ in range(12):
+        m = re.search(r"/([a-f0-9]{32})/", page.url)
+        if m:
+            return m.group(1)
+        try:
+            m = re.search(r"/([a-f0-9]{32})/", page.content())
+            if m:
+                return m.group(1)
+        except Exception:  # noqa: BLE001  (page is navigating right now)
+            pass
+        page.wait_for_timeout(500)
     raise PurchaseError("Could not determine the Shatel session id from the page")
 
 
