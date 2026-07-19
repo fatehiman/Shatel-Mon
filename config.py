@@ -14,6 +14,44 @@ USERNAME_PLACEHOLDER = "YOUR_USERNAME"
 PASSWORD_PLACEHOLDER = "YOUR_PASSWORD"
 _PLACEHOLDERS = {USERNAME_PLACEHOLDER.lower(), PASSWORD_PLACEHOLDER.lower(), ""}
 
+# The [purchase] section — shared by the first-run template and the migration
+# that appends it to configs created before the auto-purchase feature existed.
+_PURCHASE_SECTION = """\
+[purchase]
+; Automatically buy more traffic when the combined remaining traffic drops
+; below auto_purchase_threshold_gb. The card details are read from the
+; external file at payment_info_path (never stored here); the app fills the
+; card number / CVV2 / expiry and requests the dynamic password, then WAITS for
+; you to enter the CAPTCHA + dynamic password and click Pay in the browser.
+enabled = true
+
+; Buy when the combined remaining traffic drops below this many GB.
+auto_purchase_threshold_gb = 2
+
+; Full path to the file holding the card details (key=value lines:
+; cardno=..., cvv=..., exp-month=.., exp-year=..). Keep this file OUTSIDE the
+; project; only this path is stored here.
+payment_info_path = E:\\appServices\\paymentInfo\\am-saman-expence.txt
+
+; Chrome profile directory reused across purchases (keeps you logged in and makes
+; the browser look like normal Chrome). Leave blank for the default under
+; %LOCALAPPDATA%\\ShatelMon\\chrome-profile.
+chrome_profile_dir =
+
+; The bank to pay through, as shown on Shatel's payment page.
+bank_name = بانک پارسیان
+
+; CSS selector of the traffic package to buy (the one picked while recording).
+package_selector = div:nth-child(2) > .row > .radio-box-new > .col-9-large > .desc
+
+; How long (minutes) to wait for you to enter the CAPTCHA/OTP and click Pay
+; before giving up (the browser is left open either way).
+payment_wait_minutes = 10
+
+; Don't start another automatic purchase within this many hours of the last one.
+purchase_cooldown_hours = 6
+"""
+
 _TEMPLATE = """\
 ; ============================================================
 ;  Shatel Mon (ShatelMon) configuration
@@ -56,40 +94,7 @@ report = CurrentTrafficPackages
 ; Show a normal (non-alert) summary notification once at startup.
 notify_summary_on_startup = false
 
-[purchase]
-; Automatically buy more traffic when the combined remaining traffic drops
-; below auto_purchase_threshold_gb. The card details are read from the
-; external file at payment_info_path (never stored here); the app fills the
-; card number / CVV2 / expiry and requests the dynamic password, then WAITS for
-; you to enter the CAPTCHA + dynamic password and click Pay in the browser.
-enabled = true
-
-; Buy when the combined remaining traffic drops below this many GB.
-auto_purchase_threshold_gb = 2
-
-; Full path to the file holding the card details (key=value lines:
-; cardno=..., cvv=..., exp-month=.., exp-year=..). Keep this file OUTSIDE the
-; project; only this path is stored here.
-payment_info_path = E:\appServices\paymentInfo\am-saman-expence.txt
-
-; Chrome profile directory reused across purchases (keeps you logged in and makes
-; the browser look like normal Chrome). Leave blank for the default under
-; %LOCALAPPDATA%\ShatelMon\chrome-profile.
-chrome_profile_dir =
-
-; The bank to pay through, as shown on Shatel's payment page.
-bank_name = بانک پارسیان
-
-; CSS selector of the traffic package to buy (the one picked while recording).
-package_selector = div:nth-child(2) > .row > .radio-box-new > .col-9-large > .desc
-
-; How long (minutes) to wait for you to enter the CAPTCHA/OTP and click Pay
-; before giving up (the browser is left open either way).
-payment_wait_minutes = 10
-
-; Don't start another automatic purchase within this many hours of the last one.
-purchase_cooldown_hours = 6
-"""
+""" + _PURCHASE_SECTION
 
 
 @dataclass
@@ -129,10 +134,22 @@ def create_default(path: str,
         f.write(_TEMPLATE.format(username=username, password=password))
 
 
+def _append_purchase_section(path: str) -> None:
+    """Add the [purchase] section to a config created before that feature existed."""
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("\n" + _PURCHASE_SECTION)
+
+
 def load(path: str) -> Config:
     cp = configparser.ConfigParser(inline_comment_prefixes=(";", "#"))
     # utf-8-sig tolerates a UTF-8 BOM that some editors (and PowerShell) add.
     cp.read(path, encoding="utf-8-sig")
+
+    # Migrate older configs: append the [purchase] section if it's missing.
+    if os.path.exists(path) and not cp.has_section("purchase"):
+        _append_purchase_section(path)
+        cp = configparser.ConfigParser(inline_comment_prefixes=(";", "#"))
+        cp.read(path, encoding="utf-8-sig")
     cred = cp["credentials"] if cp.has_section("credentials") else {}
     s = cp["settings"] if cp.has_section("settings") else {}
     p = cp["purchase"] if cp.has_section("purchase") else {}
