@@ -94,7 +94,13 @@ notify_repeat_hours = 6
 ; Which traffic report to read (leave as-is).
 report = CurrentTrafficPackages
 
+; Check immediately when the app starts. Off by default: the app usually starts
+; at boot, when the machine may still be without internet for a few minutes, so
+; the first check waits one full interval instead.
+check_on_startup = false
+
 ; Show a normal (non-alert) summary notification once at startup.
+; (Shown after the first completed check when check_on_startup = false.)
 notify_summary_on_startup = false
 
 """ + _PURCHASE_SECTION
@@ -113,6 +119,7 @@ class Config:
     notify_repeat_hours: float = 6.0
     report: str = "CurrentTrafficPackages"
     notify_summary_on_startup: bool = False
+    check_on_startup: bool = False
     # -- purchase --
     auto_purchase_enabled: bool = True
     auto_purchase_threshold_mb: float = 2048.0
@@ -183,6 +190,7 @@ def load(path: str) -> Config:
         notify_repeat_hours=getf(s, "notify_repeat_hours", 6),
         report=(s.get("report", "CurrentTrafficPackages").strip() if s else "CurrentTrafficPackages"),
         notify_summary_on_startup=getb(s, "notify_summary_on_startup", "false"),
+        check_on_startup=getb(s, "check_on_startup", "false"),
         auto_purchase_enabled=getb(p, "enabled", "true"),
         auto_purchase_threshold_mb=getf(p, "auto_purchase_threshold_gb", 2) * 1024.0,
         payment_info_path=(p.get("payment_info_path", "").strip() if p else ""),

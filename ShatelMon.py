@@ -472,11 +472,19 @@ class ShatelMonApp:
 
     def _worker(self):
         log.info("Checker thread started")
-        # initial check of both, then summary if requested
-        self.check_quota()
-        self.check_service_expire()
-        if self.cfg.notify_summary_on_startup:
-            notify(APP_NAME, f"{self._quota_status}; {self._service_status}.", self.icon)
+        # By default the first check happens only after one full interval: the app
+        # is usually launched at boot, when the machine often has no internet yet,
+        # and an immediate check would just produce a "can't reach Shatel" popup.
+        # Set check_on_startup = true to check right away instead.
+        pending_summary = self.cfg.notify_summary_on_startup
+        if self.cfg.check_on_startup:
+            self.check_quota()
+            self.check_service_expire()
+            if pending_summary:
+                notify(APP_NAME, f"{self._quota_status}; {self._service_status}.", self.icon)
+                pending_summary = False
+        else:
+            log.info("Skipping the startup check; first check in one interval")
 
         while not self._stop.is_set():
             wait_min = self._interval_minutes()
@@ -497,6 +505,10 @@ class ShatelMonApp:
                     self.check_service_expire(announce=(cmd == "expire"))
             except Exception as e:  # noqa: BLE001
                 log.exception("Unexpected error during check: %s", e)
+            # The startup summary is deferred to the first completed check.
+            if pending_summary and cmd == "all":
+                pending_summary = False
+                notify(APP_NAME, f"{self._quota_status}; {self._service_status}.", self.icon)
 
     def run(self):
         # Start the background threads directly rather than via pystray's `setup`

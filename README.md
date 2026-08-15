@@ -32,6 +32,10 @@ is active.
   default 10 GB) and no alert is active, it checks every `relaxed_interval_minutes`
   (default 6 h); once traffic drops below that or an alert is active, it checks every
   `check_interval_minutes` (default 30 min).
+- **No check at startup:** the first check runs one interval *after* launch, not at
+  launch. The app is typically started at boot, when the machine may still be without
+  internet — an immediate check would only produce a "could not reach Shatel" popup.
+  Set `check_on_startup = true` to check right away instead.
 - **Fetch errors are reported:** if login fails, the network is down, or the report can't be
   read, you get a clear notification (manual fetches always notify; periodic errors are
   de-duplicated so a long outage won't spam you).
@@ -100,8 +104,13 @@ expire_warning_days          = 3      ; alert when a package expires within N da
 service_expire_warning_days  = 7      ; alert when the service period ends within N days
 notify_repeat_hours          = 6      ; don't repeat the same alert more often than this
 report                       = CurrentTrafficPackages
+check_on_startup             = false  ; false = first check runs one interval after launch
 notify_summary_on_startup    = false  ; show a one-off summary notification at startup
 ```
+
+`check_on_startup` defaults to **false** so a boot-time launch doesn't check while the
+network is still coming up; with it off, `notify_summary_on_startup` shows its summary
+after the *first completed* check instead of at launch.
 
 A UTF-8 BOM (added by some editors / PowerShell) is tolerated.
 
