@@ -317,7 +317,8 @@ class ShatelMonApp:
     def _client_or_new(self) -> ShatelClient:
         if self.client is None:
             self.client = ShatelClient(self.cfg.username, self.cfg.password,
-                                       report=self.cfg.report)
+                                       report=self.cfg.report,
+                                       account_selector=self.cfg.account_selector)
         return self.client
 
     def _interval_minutes(self) -> int:

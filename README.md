@@ -94,6 +94,7 @@ A sample is provided in [`ShatelMon.sample.conf`](ShatelMon.sample.conf):
 [credentials]
 username = YOUR_USERNAME
 password = YOUR_PASSWORD
+account_selector = ; only needed if your login has more than one linked sub-account
 
 [settings]
 check_interval_minutes       = 30     ; interval when traffic is low / an alert is active
@@ -113,6 +114,14 @@ network is still coming up; with it off, `notify_summary_on_startup` shows its s
 after the *first completed* check instead of at launch.
 
 A UTF-8 BOM (added by some editors / PowerShell) is tolerated.
+
+### If your login has more than one linked sub-account
+
+Shatel added an extra "select account" step to login for accounts that have more than
+one sub-account linked to the same phone number/password. If that's the case for you,
+ShatelMon logs a warning naming the sub-accounts and picks the first one by default. Set
+`account_selector` in `[credentials]` to the sub-account's Persian description (or its
+numeric `relationId` from that log line) to pin a specific one instead.
 
 ## Automatic traffic purchase
 

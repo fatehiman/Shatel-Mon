@@ -202,6 +202,24 @@ def run_purchase(cfg, on_status: Callable[[str], None] | None = None) -> None:
             page.get_by_role("textbox", name="username").fill(cfg.username)
             page.get_by_role("textbox", name="password").fill(cfg.password)
             page.get_by_role("button", name="ورود", exact=True).click()
+
+            # Logins linked to more than one Shatel sub-account are routed
+            # through an extra "select account" page; pick the configured one
+            # (falls back to whichever appears first) before continuing on.
+            try:
+                page.wait_for_url("**account.shatel.ir/select**", timeout=8_000)
+            except PWTimeout:
+                pass
+            if "account.shatel.ir/select" in page.url:
+                status("Selecting the Shatel sub-account…")
+                if not cfg.account_selector:
+                    raise PurchaseError(
+                        "Shatel asked which linked sub-account to use, but "
+                        "account_selector isn't set in ShatelMon.conf")
+                target = page.get_by_text(cfg.account_selector)
+                target.first.wait_for(timeout=15_000)
+                target.first.click()
+
             page.wait_for_url("**my.shatel.ir/**", timeout=60_000)
 
         # --- go straight to the purchase page ---

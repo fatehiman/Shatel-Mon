@@ -65,6 +65,12 @@ _TEMPLATE = """\
 username = {username}
 password = {password}
 
+; If this login is linked to more than one Shatel sub-account, the site now
+; asks which one to use on every login. Set this to the sub-account's Persian
+; description (or its relationId) as shown in the notification/log when that
+; happens; leave blank to just use whichever one comes first.
+account_selector =
+
 [settings]
 ; How often to check (minutes) when traffic is LOW or an alert is active.
 check_interval_minutes = 30
@@ -110,6 +116,7 @@ notify_summary_on_startup = false
 class Config:
     username: str = ""
     password: str = ""
+    account_selector: str = ""
     check_interval_minutes: int = 30
     relaxed_interval_minutes: int = 360
     relaxed_traffic_threshold_mb: float = 10240.0
@@ -181,6 +188,7 @@ def load(path: str) -> Config:
     return Config(
         username=cred.get("username", "").strip() if cred else "",
         password=cred.get("password", "").strip() if cred else "",
+        account_selector=cred.get("account_selector", "").strip() if cred else "",
         check_interval_minutes=max(1, geti(s, "check_interval_minutes", 30)),
         relaxed_interval_minutes=max(1, geti(s, "relaxed_interval_minutes", 360)),
         relaxed_traffic_threshold_mb=getf(s, "relaxed_traffic_threshold_mb", 10240),

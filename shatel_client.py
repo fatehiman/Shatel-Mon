@@ -131,11 +131,17 @@ def _strip_tags(html: str) -> str:
 
 class ShatelClient:
     def __init__(self, username: str, password: str,
-                 report: str = "CurrentTrafficPackages", timeout: int = 40):
+                 report: str = "CurrentTrafficPackages", timeout: int = 40,
+                 account_selector: str = ""):
         self.username = username
         self.password = password
         self.report = report
         self.timeout = timeout
+        # Shatel accounts that are linked to more than one sub-account now show
+        # an extra "select account" step during login (see _select_account).
+        # account_selector matches a sub-account by its relationId or by a
+        # substring of its Persian description; blank -> use whichever comes first.
+        self.account_selector = str(account_selector or "").strip()
         self.session: requests.Session | None = None
         self.guid: str | None = None
 
@@ -194,6 +200,14 @@ class ShatelClient:
                   headers={"Referer": "https://account.shatel.ir/"},
                   timeout=self.timeout)
         action, fields = self._parse_form_post(r.text)
+
+        # 4b. Accounts linked to more than one sub-account are routed to an
+        # account-selection page instead of the form_post page. Pick one and
+        # replay the callback to get the real form_post page.
+        if not action and "/select" in urlparse(r.url).path:
+            r = self._select_account(s, r.url)
+            action, fields = self._parse_form_post(r.text)
+
         if not action:
             raise LoginError("OIDC callback did not return the expected form_post page")
 
@@ -210,6 +224,68 @@ class ShatelClient:
         if not self.guid:
             raise LoginError("Authenticated but could not locate the session report GUID")
         log.info("Login OK (guid=%s)", self.guid)
+
+    def _select_account(self, s: requests.Session, select_url: str):
+        """Handle the "select account" step Shatel added for logins linked to
+        more than one sub-account. Fetches the list of sub-accounts, picks one
+        (see account_selector), submits the choice, and returns the response
+        of replaying the OIDC callback -- which then serves the normal
+        form_post page login() expects.
+        """
+        return_url = (parse_qs(urlparse(select_url).query).get("returnUrl") or [None])[0]
+        if not return_url:
+            raise LoginError(f"Account-select page had no returnUrl ({select_url})")
+
+        ctx = s.get("https://account-api.shatel.ir/ui/v1.0/account/select/context",
+                    params={"returnUrl": return_url},
+                    headers={"Accept": "application/json"}, timeout=self.timeout)
+        try:
+            ctx_data = ctx.json()
+        except ValueError:
+            raise LoginError(f"Account-select context returned non-JSON (HTTP {ctx.status_code})")
+        result = ctx_data.get("result") or {}
+        children = result.get("childUserAccounts") or []
+        if not children:
+            raise LoginError("Account-select step had no sub-accounts to choose from")
+
+        chosen = None
+        if self.account_selector:
+            for c in children:
+                if (self.account_selector == str(c.get("relationId")) or
+                        self.account_selector in (c.get("description") or "")):
+                    chosen = c
+                    break
+            if chosen is None:
+                raise LoginError(
+                    f"account_selector {self.account_selector!r} matched none of the "
+                    f"linked sub-accounts ({[c.get('description') for c in children]})")
+        else:
+            chosen = children[0]
+            if len(children) > 1:
+                log.warning(
+                    "Multiple Shatel sub-accounts linked (%s); using %r "
+                    "-- set account_selector in ShatelMon.conf to pick a specific one",
+                    [c.get("description") for c in children], chosen.get("description"))
+
+        sel = s.post("https://account-api.shatel.ir/ui/v1.0/account/select",
+                     json={"returnUrl": return_url,
+                           "parentAccountSecureValue": result.get("parentAccountSecureValue"),
+                           "selectedChildAccountSecureValue": chosen.get("childAccountSecureValue")},
+                     headers={"Accept": "application/json",
+                              "Origin": "https://account.shatel.ir",
+                              "Referer": "https://account.shatel.ir/"},
+                     timeout=self.timeout)
+        try:
+            sel_data = sel.json()
+        except ValueError:
+            raise LoginError(f"Account-select POST returned non-JSON (HTTP {sel.status_code})")
+        if not sel_data.get("isSuccess"):
+            msgs = "; ".join(sel_data.get("messages") or []) or f"HTTP {sel.status_code}"
+            raise LoginError(f"Account selection rejected: {msgs}")
+
+        log.info("Selected Shatel sub-account: %s", chosen.get("description"))
+        return s.get(return_url, headers={"Referer": "https://account.shatel.ir/"},
+                     timeout=self.timeout)
 
     @staticmethod
     def _parse_form_post(html: str):
