@@ -57,6 +57,7 @@ is active.
 |------|--------|
 | **Fetch remaind quota now** | Check remaining traffic immediately and show the result |
 | **Fetch service expire date now** | Check the service expiry date immediately and show the result |
+| **Fetch traffic packages** | Fetch the Current Traffic Packages report and list each package that still has traffic left (remaining traffic + remaining days), one per line |
 | **Buy traffic now** | Start a traffic purchase immediately (opens Chrome; you enter the OTP and pay) |
 | **Exit** | Quit the app |
 

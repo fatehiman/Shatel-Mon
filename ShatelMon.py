@@ -232,6 +232,7 @@ class ShatelMonApp:
         return pystray.Menu(
             pystray.MenuItem("Fetch remaind quota now", self.on_fetch_quota, default=True),
             pystray.MenuItem("Fetch service expire date now", self.on_fetch_expire),
+            pystray.MenuItem("Fetch traffic packages", self.on_fetch_packages),
             pystray.MenuItem("Buy traffic now", self.on_buy_traffic),
             pystray.MenuItem("Exit", self.on_exit),
         )
@@ -241,6 +242,9 @@ class ShatelMonApp:
 
     def on_fetch_expire(self, icon, item):
         self._cmd_queue.put("expire")       # manual -> announce result
+
+    def on_fetch_packages(self, icon, item):
+        self._cmd_queue.put("packages")     # manual -> announce result
 
     def on_buy_traffic(self, icon, item):
         self._cmd_queue.put("buy")          # manual -> start a purchase
@@ -392,6 +396,36 @@ class ShatelMonApp:
         for key, title, message in alerts:
             self.maybe_notify(key, title, message)
 
+    def check_packages(self, announce: bool = False):
+        self._busy.set()
+        try:
+            packages = self._client_or_new().get_packages()
+        except LoginError as e:
+            self._notify_error("login_error", f"{APP_NAME}: login failed",
+                               "Login to Shatel failed — please check your username and "
+                               "password in ShatelMon.conf.", announce)
+            return
+        except Exception as e:  # noqa: BLE001
+            self._notify_error("packages_error", f"{APP_NAME}: traffic packages check failed",
+                               self._error_text(e), announce)
+            return
+        finally:
+            self._busy.clear()
+            self._refresh_icon()
+
+        rows = [p for p in packages
+                if p.remaining_mb is not None and p.remaining_mb > 0]
+        log.info("Traffic packages: %d positive of %d total", len(rows), len(packages))
+
+        if announce:
+            if rows:
+                lines = [f"{pkg_label(p)}: {fmt_traffic(p.remaining_mb)} left, "
+                         f"{fmt_days(p.remaining_days)} remaining" for p in rows]
+                message = "\n".join(lines)
+            else:
+                message = "No traffic packages with remaining traffic."
+            notify(f"{APP_NAME}: traffic packages", message, self.icon)
+
     def check_service_expire(self, announce: bool = False):
         self._busy.set()
         try:
@@ -504,6 +538,8 @@ class ShatelMonApp:
                     self.check_quota(announce=(cmd == "quota"))
                 if cmd in ("expire", "all"):
                     self.check_service_expire(announce=(cmd == "expire"))
+                if cmd == "packages":
+                    self.check_packages(announce=True)
             except Exception as e:  # noqa: BLE001
                 log.exception("Unexpected error during check: %s", e)
             # The startup summary is deferred to the first completed check.
